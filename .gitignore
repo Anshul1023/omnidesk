@@ -29,3 +29,6 @@ dist-ssr
 !.env.example
 
 .vercel
+
+# local login logs
+.freebuff-vercel-login.*
