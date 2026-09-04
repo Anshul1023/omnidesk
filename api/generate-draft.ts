@@ -10,6 +10,10 @@
  *                     falls back to the built-in smart mock
  *   OPENAI_MODEL    — optional, defaults to gpt-4o-mini
  *   OPENAI_BASE_URL — optional, any OpenAI-compatible endpoint
+ *
+ * Note: uses the classic (req, res) Node signature — Vercel's Node.js
+ * launcher waits for res.end(); a one-arg Web-Response handler hangs
+ * until invocation timeout under the legacy launcher.
  */
 
 type AIContext = {
@@ -20,23 +24,29 @@ type AIContext = {
   subject?: string;
 };
 
-export default async function handler(req: Request): Promise<Response> {
+type VercelReq = { method?: string; body?: unknown };
+type VercelRes = { status: (code: number) => { json: (payload: unknown) => void } };
+
+export default async function handler(req: VercelReq, res: VercelRes): Promise<void> {
   if (req.method !== 'POST') {
-    return Response.json({ ok: false, error: 'METHOD_NOT_ALLOWED' }, { status: 405 });
+    res.status(405).json({ ok: false, error: 'METHOD_NOT_ALLOWED' });
+    return;
   }
 
   let ctx: AIContext;
   try {
-    const body = (await req.json()) as { context?: AIContext };
+    const body = (req.body ?? {}) as { context?: AIContext };
     ctx = body.context ?? ({} as AIContext);
   } catch {
-    return Response.json({ ok: false, error: 'BAD_REQUEST' }, { status: 400 });
+    res.status(400).json({ ok: false, error: 'BAD_REQUEST' });
+    return;
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     // No key configured — frontend falls back to its built-in mock.
-    return Response.json({ ok: false, code: 'NO_KEY' }, { status: 200 });
+    res.status(200).json({ ok: false, code: 'NO_KEY' });
+    return;
   }
 
   const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
@@ -56,7 +66,7 @@ export default async function handler(req: Request): Promise<Response> {
     : `Draft a reply to their last message: "${ctx.lastIncoming || ''}".`;
 
   try {
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+    const r = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -72,23 +82,18 @@ export default async function handler(req: Request): Promise<Response> {
       }),
     });
 
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      return Response.json(
-        { ok: false, code: 'UPSTREAM_ERROR', detail: detail.slice(0, 300) },
-        { status: 200 }
-      );
+    if (!r.ok) {
+      const detail = await r.text().catch(() => '');
+      res.status(200).json({ ok: false, code: 'UPSTREAM_ERROR', detail: detail.slice(0, 300) });
+      return;
     }
 
-    const data = (await res.json()) as {
+    const data = (await r.json()) as {
       choices?: { message?: { content?: string } }[];
     };
     const draft = data.choices?.[0]?.message?.content || '';
-    return Response.json({ ok: true, draft });
+    res.status(200).json({ ok: true, draft });
   } catch (err) {
-    return Response.json(
-      { ok: false, code: 'UPSTREAM_ERROR', detail: String(err) },
-      { status: 200 }
-    );
+    res.status(200).json({ ok: false, code: 'UPSTREAM_ERROR', detail: String(err) });
   }
 }
