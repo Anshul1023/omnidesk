@@ -80,8 +80,10 @@ export default async function handler(req: Request): Promise<Response> {
       );
     }
 
-    const data = await res.json();
-    const draft = (data.choices?.[0]?.message?.content as string) || '';
+    const data = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    const draft = data.choices?.[0]?.message?.content || '';
     return Response.json({ ok: true, draft });
   } catch (err) {
     return Response.json(
